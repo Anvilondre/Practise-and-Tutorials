@@ -1,4 +1,4 @@
-import numpy as np
+import torch
 from sklearn.datasets import make_regression
 from sklearn.metrics import mean_squared_error
 from sklearn.linear_model import LinearRegression
@@ -6,14 +6,15 @@ from sklearn.linear_model import LinearRegression
 
 class My_LinearRegression:
     def __init__(
-            self,
-            solver='gr_d',
-            normal_init=True,
-            fit_intercept=True,
-            learning_rate=1e-3,
-            tolerance=1e-3,
-            n_steps=10000,
-            verbose=False):
+        self,
+        solver='equation',
+        normal_init=True,
+        fit_intercept=True,
+        learning_rate=1e-6,
+        tolerance=1e-3,
+        n_steps=10000,
+        verbose=False
+    ):
         self.solver = solver
         self.fit_intercept = fit_intercept
         self.learning_rate = learning_rate
@@ -21,61 +22,70 @@ class My_LinearRegression:
         self.normal_init = normal_init
         self.verbose = verbose
         self.tolerance = tolerance
-        self.W = None
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     def cost(self, X, y):
-        m = len(y)
-        y_hat = X.dot(self.W)
+        m = y.size(0)
+        y_hat = torch.mm(X, self.W)
         error = (y_hat - y) ** 2
-        return 1 / (2 * m) * np.sum(error)
+        return 1 / (2 * m) * torch.sum(error)
 
     def gradient_descent(self, X, y):
-        m = X.shape[0]
+        m = X.size(0)
         for i in range(self.n_steps):
             objective = self.cost(X, y)
-            grad = np.dot(X.T, (np.dot(X, self.W) - y))
+            grad = torch.mm(X.t(), (torch.mm(X, self.W) - y))
             self.W -= self.learning_rate * 1 / m * grad
             new_error = self.cost(X, y)
-            change = np.abs(np.sum(objective - new_error))
+            change = torch.abs(torch.sum(objective - new_error))
             if change < self.tolerance:
                 break
             if self.verbose and i % 100 == 0:
-                print(self.cost(X, y))
+                print(self.cost(X, y).item())
 
     def normal_equation(self, X, y):
-        det = np.linalg.det(np.dot(X.T, X))
+        det = torch.det(torch.mm(X.t(), X))
         if det == 0:
             raise Exception('X.T * X is a singular matrix')
-        self.W = np.dot(np.linalg.inv(np.dot(X.T, X)), np.dot(X.T, y))
+        self.W = torch.mm(
+            torch.inverse(torch.mm(X.t(), X)), torch.mm(X.t(), y)
+        )
 
-    def fit(self, X, y):
+    def fit(self, X_train, y_train):
+        X = torch.from_numpy(X_train).float().to(self.device)
+        y = torch.from_numpy(y_train).float().to(self.device)
+        y = y.view(-1, 1)
+
         if self.fit_intercept:
-            X = np.c_[np.ones(X.shape[0]), X]
+            ones = torch.ones(X.size(0), 1).to(self.device)
+            X = torch.cat((ones, X), 1)
 
         if self.normal_init:
-            self.W = np.random.rand((X.shape[1]))
+            self.W = torch.rand((X.size(1), 1)).to(self.device)
         else:
-            self.W = np.zeros((X.shape[1]))
+            self.W = torch.zeros((X.size(1), 1)).to(self.device)
 
         if self.solver == 'gr_d':
             self.gradient_descent(X, y)
-        else:
+        elif self.solver == 'normal':
             self.normal_equation(X, y)
 
     def predict(self, X):
+        X = torch.from_numpy(X).float().to(self.device)
         if self.fit_intercept:
-            X = np.c_[np.ones(X.shape[0]), X]
-        return np.dot(X, self.W)
+            ones = torch.ones(X.size(0), 1).to(self.device)
+            X = torch.cat((ones, X), 1)
+        return torch.mm(X, self.W).view(-1).cpu().numpy()
 
     def coef_(self):
         if self.fit_intercept:
-            return self.W[1:]
+            return self.W[1:].view(-1).cpu().numpy()
         else:
-            return self.W
+            return self.W.view(-1).cpu().numpy()
 
     def intercept(self):
         if self.fit_intercept:
-            return self.W[0]
+            return self.W[0].cpu().numpy()
         else:
             return None
 
@@ -85,9 +95,11 @@ if __name__ == '__main__':
                            n_targets=1, bias=2.5, noise=40, random_state=42)
     print(f'X shape: {X.shape}')
     print(f'y shape: {y.shape}')
+    print('=' * 10)
 
     # my linear regression
-    my_model_grad_descent = My_LinearRegression()
+    my_model_grad_descent = My_LinearRegression(
+        solver='gr_d', learning_rate=1e-3)
     my_model_grad_descent.fit(X, y)
     grad_descent_preds = my_model_grad_descent.predict(X)
     print(
